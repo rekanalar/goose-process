@@ -14,7 +14,7 @@ functions.
 Add this to the root file of the program that uses it:
 
 ```goose
-import process from "rekanalar/goose-process@v0.2.0";
+import process from "rekanalar/goose-process@v1.0.0";
 ```
 
 The CI runs the gate on Linux, on macOS and on Windows. It uses Goose
@@ -30,6 +30,34 @@ apart run `run_split`.
 Nothing of v0.1.x changed its name, its type or its result. One rule is
 new: `run` refuses a request that sets `separate`. Use `run_split` when you
 want the two streams apart.
+
+## Parity with the reference libraries
+
+The package holds the features of Python `subprocess`, Rust
+`std::process::Command`, Go `os/exec` and Node `child_process`.
+
+| Reference | Here |
+|---|---|
+| Python `run`, Go `Run` | `run` |
+| Python `capture_output`, Go `CombinedOutput` | `run` (joined), `run_split` (apart) |
+| Python `input`, Go `Cmd.Stdin` | the `input` argument, and `write` with `close_input` |
+| Python `env` and `cwd` | `Options.env` and `Options.cwd` |
+| Python `timeout`, Go `CommandContext` | `Options.timeout_ms`, `wait` with a limit |
+| Python `Popen`, Rust `spawn`, Go `Start` | `spawn` |
+| Python `poll`, Rust `try_wait` | `alive` |
+| Python `wait`, Rust `wait`, Go `Wait` | `wait` |
+| Python `kill`, Rust `kill`, Go `Process.Kill` | `kill`, `free` |
+| Node `spawn` streams | `read` in a loop |
+| A pipe between two children | a copy through the caller (`examples/chain.goose`) |
+
+These gaps stay on purpose:
+
+- The stop is always a kill. Node `killSignal` and Python `terminate` have
+  no match here.
+- Python `check` has no match. Test `status` and `code` after the wait.
+- The chain copies the bytes through the caller. No pipe object joins two
+  children.
+- The package starts no shell.
 
 ## This package is a stopgap
 
@@ -49,7 +77,7 @@ program and waits for it.
 
 ```goose
 import std;
-import process from "rekanalar/goose-process@v0.2.0";
+import process from "rekanalar/goose-process@v1.0.0";
 
 fn main() {
     var args: const u8[:][>..] = [];
