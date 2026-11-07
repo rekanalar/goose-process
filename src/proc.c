@@ -178,7 +178,7 @@ static int64_t proc_now_ms(void) {
 
 // Wait for the output of the child. It ends early when the child writes.
 // The wait is short, so the clock of the run stays close.
-static void proc_wait(int fd) {
+static void proc_poll_fd(int fd) {
 #ifdef _WIN32
     Sleep(1);
 #else
@@ -274,64 +274,109 @@ static int proc_read_item(const char **at, const char *end, const char **out) {
     return 1;
 }
 
+// The pieces of a parsed spec.
+struct proc_spec {
+    const char *args[PROC_MAX_ARGS + 1];
+    const char *cwd;
+    struct proc_list env;
+    const char *const *env_ptr;
+    int options;
+};
+
+// Parse the flat buffer. combined selects the joined streams. It returns 0
+// on a bad buffer. The caller frees the env of a parsed spec.
+static int proc_parse(proc_slice spec, int combined, struct proc_spec *p) {
+    const char *at = (const char *)spec.data;
+    const char *end = at + spec.len;
+
+    proc_list_init(&p->env);
+    long argc = 0;
+    at = proc_read_count(at, end, &argc);
+    if (argc < 1 || argc > PROC_MAX_ARGS) return 0;
+    for (long i = 0; i < argc; i++) {
+        if (!proc_read_item(&at, end, &p->args[i])) return 0;
+    }
+    p->args[argc] = NULL;
+
+    long envc = 0;
+    at = proc_read_count(at, end, &envc);
+    if (envc < 0 || envc > PROC_MAX_ENV) return 0;
+
+    const char *entries[PROC_MAX_ENV];
+    for (long i = 0; i < envc; i++) {
+        if (!proc_read_item(&at, end, &entries[i])) return 0;
+    }
+
+    if (!proc_read_item(&at, end, &p->cwd)) return 0;
+
+    p->options = subprocess_option_enable_async |
+                 subprocess_option_enable_async_no_wait |
+                 subprocess_option_search_user_path;
+    if (combined) p->options |= subprocess_option_combined_stdout_stderr;
+
+    // The child gets the environment of the parent, plus the entries that
+    // the caller gave. Without an entry the child inherits the environment.
+    p->env_ptr = NULL;
+    if (envc > 0) {
+        proc_load_parent_env(&p->env);
+        for (long i = 0; i < envc; i++) {
+            proc_env_set(&p->env, entries[i], strlen(entries[i]));
+        }
+#ifdef _WIN32
+        // Windows wants the block sorted by name.
+        qsort(p->env.items, (size_t)p->env.count, sizeof(char *), proc_env_cmp);
+#endif
+        p->env_ptr = (const char *const *)p->env.items;
+    } else {
+        p->options |= subprocess_option_inherit_environment;
+    }
+    return 1;
+}
+
+// A growable buffer of bytes that a slot holds for the caller.
+struct proc_gbuf {
+    uint8_t *data;
+    int64_t len;
+    int64_t cap;
+};
+
+static void proc_gbuf_free(struct proc_gbuf *buf) {
+    free(buf->data);
+    buf->data = NULL;
+    buf->len = 0;
+    buf->cap = 0;
+}
+
+static void proc_gbuf_append(struct proc_gbuf *buf, const char *data, int64_t len) {
+    if (buf->len + len > buf->cap) {
+        int64_t cap = buf->cap ? buf->cap : 4096;
+        while (cap < buf->len + len) cap *= 2;
+        uint8_t *grown = (uint8_t *)realloc(buf->data, (size_t)cap);
+        if (!grown) return;
+        buf->data = grown;
+        buf->cap = cap;
+    }
+    memcpy(buf->data + buf->len, data, (size_t)len);
+    buf->len += len;
+}
+
 // Start a program and wait for it. The flat buffer holds the arguments, the
 // environment and the directory. It returns the status of the run and it
 // fills the exit code.
 int32_t proc_run(proc_slice spec, proc_slice input, gs_rref out, int32_t *code,
                  int32_t timeout_ms) {
-    const char *at = (const char *)spec.data;
-    const char *end = at + spec.len;
-
-    long argc = 0;
-    at = proc_read_count(at, end, &argc);
-    if (argc < 1 || argc > PROC_MAX_ARGS) return PROC_REFUSED;
-
-    const char *args[PROC_MAX_ARGS + 1];
-    for (long i = 0; i < argc; i++) {
-        if (!proc_read_item(&at, end, &args[i])) return PROC_REFUSED;
-    }
-    args[argc] = NULL;
-
-    long envc = 0;
-    at = proc_read_count(at, end, &envc);
-    if (envc < 0 || envc > PROC_MAX_ENV) return PROC_REFUSED;
-
-    const char *entries[PROC_MAX_ENV];
-    for (long i = 0; i < envc; i++) {
-        if (!proc_read_item(&at, end, &entries[i])) return PROC_REFUSED;
-    }
-
-    const char *cwd = NULL;
-    if (!proc_read_item(&at, end, &cwd)) return PROC_REFUSED;
-
-    // The child gets the environment of the parent, plus the entries that
-    // the caller gave. Without an entry the child inherits the environment.
-    struct proc_list env;
-    proc_list_init(&env);
-    int options = subprocess_option_combined_stdout_stderr |
-                  subprocess_option_enable_async |
-                  subprocess_option_enable_async_no_wait |
-                  subprocess_option_search_user_path;
-    const char *const *env_ptr = NULL;
-    if (envc > 0) {
-        proc_load_parent_env(&env);
-        for (long i = 0; i < envc; i++) {
-            proc_env_set(&env, entries[i], strlen(entries[i]));
-        }
-#ifdef _WIN32
-        // Windows wants the block sorted by name.
-        qsort(env.items, (size_t)env.count, sizeof(char *), proc_env_cmp);
-#endif
-        env_ptr = (const char *const *)env.items;
-    } else {
-        options |= subprocess_option_inherit_environment;
+    struct proc_spec parsed;
+    if (!proc_parse(spec, 1, &parsed)) {
+        proc_list_free(&parsed.env);
+        return PROC_REFUSED;
     }
 
     struct subprocess_s child;
-    const char *cwd_ptr = (cwd && cwd[0]) ? cwd : NULL;
-    int created = subprocess_create_ex(args, options, env_ptr, cwd_ptr, &child);
+    const char *cwd_ptr = (parsed.cwd && parsed.cwd[0]) ? parsed.cwd : NULL;
+    int created = subprocess_create_ex(parsed.args, parsed.options, parsed.env_ptr,
+                                       cwd_ptr, &child);
     if (created != 0) {
-        proc_list_free(&env);
+        proc_list_free(&parsed.env);
         return PROC_NOT_STARTED;
     }
 
@@ -402,7 +447,7 @@ int32_t proc_run(proc_slice spec, proc_slice input, gs_rref out, int32_t *code,
             stopped = 1;
             break;
         }
-        proc_wait(out_fd);
+        proc_poll_fd(out_fd);
     }
 
     int return_code = 0;
@@ -420,8 +465,305 @@ int32_t proc_run(proc_slice spec, proc_slice input, gs_rref out, int32_t *code,
         pthread_join(thread, NULL);
 #endif
     }
-    proc_list_free(&env);
+    proc_list_free(&parsed.env);
 
     *code = return_code;
     return stopped ? PROC_STOPPED : PROC_ENDED;
+}
+
+// One slot of the handle table. It holds a live child.
+struct proc_slot {
+    int used;
+    // The two streams stay apart.
+    int apart;
+    // The caller stopped the child.
+    int killed;
+    // The child was joined and destroyed.
+    int reaped;
+    // The exit code of a reaped child.
+    int code;
+    struct subprocess_s child;
+    // NULL when the input is closed. The header closes the file when it
+    // reaps the child, so this stays NULL after that.
+    FILE *stdin_file;
+    // The bytes of the output stream that the caller has not taken.
+    struct proc_gbuf out;
+    // The bytes of the error stream that the caller has not taken.
+    struct proc_gbuf err;
+};
+
+// The table of the live children.
+#define PROC_SLOTS 16
+static struct proc_slot proc_table[PROC_SLOTS];
+
+// The slot of an id. NULL for a bad id or a free slot.
+static struct proc_slot *proc_slot(int32_t id) {
+    if (id < 0 || id >= PROC_SLOTS) return NULL;
+    if (!proc_table[id].used) return NULL;
+    return &proc_table[id];
+}
+
+// The slot owns the file of the input. The header never closes it, so the
+// file has one owner and one close.
+static void proc_drop_in(struct proc_slot *slot) {
+    if (!slot->stdin_file) return;
+    fclose(slot->stdin_file);
+    slot->stdin_file = NULL;
+}
+
+// The status of a child that the caller may have stopped.
+static int proc_status(struct proc_slot *slot) {
+    return slot->killed ? PROC_STOPPED : PROC_ENDED;
+}
+
+// The stop of a child stays a kill.
+static void proc_stop(struct proc_slot *slot) {
+    subprocess_terminate(&slot->child);
+    slot->killed = 1;
+}
+
+// Wait for the child and destroy it. It gives the exit code. The file of
+// the input closes first, so the child sees the end of its input.
+static int proc_reap(struct proc_slot *slot) {
+    proc_drop_in(slot);
+    int return_code = 0;
+    subprocess_join(&slot->child, &return_code);
+    subprocess_destroy(&slot->child);
+    slot->reaped = 1;
+    slot->code = return_code;
+    return return_code;
+}
+
+// A write to a closed pipe must not kill the parent.
+static void proc_block_sigpipe(void) {
+#ifndef _WIN32
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGPIPE);
+    pthread_sigmask(SIG_BLOCK, &set, NULL);
+#endif
+}
+
+// Read the pipes of the child until they hold no more. It never blocks. The
+// bytes wait in the slot until the caller reads them.
+static void proc_drain(struct proc_slot *slot) {
+    if (slot->reaped) return;
+    char buffer[4096];
+    unsigned got;
+    while ((got = subprocess_read_stdout(&slot->child, buffer, sizeof buffer)) > 0) {
+        proc_gbuf_append(&slot->out, buffer, (int64_t)got);
+    }
+    if (slot->apart) {
+        while ((got = subprocess_read_stderr(&slot->child, buffer, sizeof buffer)) > 0) {
+            proc_gbuf_append(&slot->err, buffer, (int64_t)got);
+        }
+    }
+}
+
+// Start a child without waiting for it. It returns the number of the slot
+// of the child, or a number below zero. The status goes into *status.
+int32_t proc_spawn(proc_slice spec, int32_t separate, int32_t *status) {
+    struct proc_spec parsed;
+    if (!proc_parse(spec, separate ? 0 : 1, &parsed)) {
+        proc_list_free(&parsed.env);
+        *status = PROC_REFUSED;
+        return -1;
+    }
+
+    struct proc_slot *slot = NULL;
+    int32_t id = -1;
+    for (int32_t i = 0; i < PROC_SLOTS; i++) {
+        if (!proc_table[i].used) {
+            slot = &proc_table[i];
+            id = i;
+            break;
+        }
+    }
+    if (!slot) {
+        proc_list_free(&parsed.env);
+        *status = PROC_REFUSED;
+        return -1;
+    }
+
+    struct subprocess_s child;
+    const char *cwd_ptr = (parsed.cwd && parsed.cwd[0]) ? parsed.cwd : NULL;
+    if (0 != subprocess_create_ex(parsed.args, parsed.options, parsed.env_ptr,
+                                  cwd_ptr, &child)) {
+        proc_list_free(&parsed.env);
+        *status = PROC_NOT_STARTED;
+        return -1;
+    }
+    proc_list_free(&parsed.env);
+
+    // The slot owns the file of the input. The header must not close it.
+    memset(slot, 0, sizeof *slot);
+    slot->used = 1;
+    slot->apart = separate ? 1 : 0;
+    slot->child = child;
+    slot->stdin_file = subprocess_stdin(&child);
+    slot->child.stdin_file = SUBPROCESS_NULL;
+#ifndef _WIN32
+    if (slot->stdin_file) {
+        // The write of the caller never waits in the kernel buffer.
+        int fd = fileno(slot->stdin_file);
+        int flags = fcntl(fd, F_GETFL, 0);
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    }
+#endif
+    *status = PROC_ENDED;
+    return id;
+}
+
+// Say whether the child of the slot still lives. The check comes first, so
+// the drain of the last call holds every byte of a child that just ended.
+int32_t proc_alive(int32_t id) {
+    struct proc_slot *slot = proc_slot(id);
+    if (!slot) return -1;
+    if (slot->reaped) return 0;
+    int alive = subprocess_alive(&slot->child) ? 1 : 0;
+    proc_drain(slot);
+    return alive;
+}
+
+// Move the bytes that arrived since the last read into the buffers of the
+// caller. It returns the count of the moved bytes, or -1 for a bad id.
+int32_t proc_read(int32_t id, gs_rref out, gs_rref err) {
+    struct proc_slot *slot = proc_slot(id);
+    if (!slot) return -1;
+    proc_drain(slot);
+    int64_t total = slot->out.len + slot->err.len;
+    if (slot->out.len > 0) gs_bld_append(out, slot->out.data, slot->out.len);
+    if (slot->err.len > 0) gs_bld_append(err, slot->err.data, slot->err.len);
+    // The slot keeps its memory for the next drain. The free releases it.
+    slot->out.len = 0;
+    slot->err.len = 0;
+    if (total > 0x7fffffff) return -1;
+    return (int32_t)total;
+}
+
+// Give bytes to the input of the child. The write runs in the thread of the
+// caller and it waits while the child does not take them. It returns the
+// count of the taken bytes, or -1 when the child is gone. A limit above 0
+// ends the wait. The count of the taken bytes is then below the length.
+int32_t proc_write(int32_t id, proc_slice bytes, int32_t timeout_ms) {
+    struct proc_slot *slot = proc_slot(id);
+    if (!slot) return -1;
+    if (slot->reaped || !slot->stdin_file) return -1;
+    if (bytes.len == 0) return 0;
+    proc_drain(slot);
+    int64_t done = 0;
+    int64_t begin = proc_now_ms();
+#ifdef _WIN32
+    while (done < bytes.len) {
+        size_t chunk = (size_t)(bytes.len - done);
+        if (chunk > 4096) chunk = 4096;
+        size_t wrote = fwrite(bytes.data + done, 1, chunk, slot->stdin_file);
+        done += (int64_t)wrote;
+        if (wrote == 0) {
+            if (!subprocess_alive(&slot->child)) {
+                proc_drop_in(slot);
+                return -1;
+            }
+            if (timeout_ms > 0 && proc_now_ms() - begin >= timeout_ms) break;
+            Sleep(1);
+        }
+    }
+#else
+    proc_block_sigpipe();
+    int fd = fileno(slot->stdin_file);
+    while (done < bytes.len) {
+        ssize_t wrote = write(fd, bytes.data + done, (size_t)(bytes.len - done));
+        if (wrote > 0) {
+            done += (int64_t)wrote;
+            continue;
+        }
+        if (wrote < 0 && errno != EAGAIN && errno != EWOULDBLOCK) break;
+        // The child does not take the bytes yet. The drain keeps its output
+        // pipe empty, so the child never waits on the parent.
+        proc_drain(slot);
+        if (!subprocess_alive(&slot->child)) {
+            proc_drop_in(slot);
+            return -1;
+        }
+        if (timeout_ms > 0 && proc_now_ms() - begin >= timeout_ms) break;
+        struct pollfd entry;
+        entry.fd = fd;
+        entry.events = POLLOUT;
+        entry.revents = 0;
+        poll(&entry, 1, 1);
+    }
+    if (done == 0 && !subprocess_alive(&slot->child)) {
+        proc_drop_in(slot);
+        return -1;
+    }
+#endif
+    if (done > 0x7fffffff) return -1;
+    return (int32_t)done;
+}
+
+// Close the input of the child. The child then sees the end of its input.
+int32_t proc_close_in(int32_t id) {
+    struct proc_slot *slot = proc_slot(id);
+    if (!slot) return -1;
+    proc_drop_in(slot);
+    return 0;
+}
+
+// Wait for the child. A limit of 0 waits without a limit. A child that does
+// not end before the limit is stopped. The exit code goes into *code.
+int32_t proc_wait(int32_t id, int32_t *code, int32_t timeout_ms) {
+    struct proc_slot *slot = proc_slot(id);
+    if (!slot) return PROC_REFUSED;
+    if (slot->reaped) {
+        *code = slot->code;
+        return proc_status(slot);
+    }
+#ifdef _WIN32
+    int out_fd = -1;
+#else
+    int out_fd = fileno(slot->child.stdout_file);
+#endif
+    int64_t start = proc_now_ms();
+    for (;;) {
+        proc_drain(slot);
+        if (!subprocess_alive(&slot->child)) break;
+        if (timeout_ms > 0 && !slot->killed && proc_now_ms() - start >= timeout_ms) {
+            proc_stop(slot);
+        }
+        proc_poll_fd(out_fd);
+    }
+    // The child ended. One more drain holds the last bytes.
+    proc_drain(slot);
+    *code = proc_reap(slot);
+    return proc_status(slot);
+}
+
+// Stop the child. The stop stays a kill, so a child that ignores the stop
+// signal still dies.
+int32_t proc_kill(int32_t id) {
+    struct proc_slot *slot = proc_slot(id);
+    if (!slot) return PROC_REFUSED;
+    if (slot->reaped) return proc_status(slot);
+    if (subprocess_alive(&slot->child)) {
+        proc_stop(slot);
+    }
+    return proc_status(slot);
+}
+
+// Free the handle. A live child is stopped first, and the join waits for
+// it. No resource of the child survives the free.
+int32_t proc_free(int32_t id) {
+    struct proc_slot *slot = proc_slot(id);
+    if (!slot) return PROC_REFUSED;
+    if (!slot->reaped) {
+        if (subprocess_alive(&slot->child)) {
+            proc_stop(slot);
+        }
+        proc_reap(slot);
+    }
+    proc_gbuf_free(&slot->out);
+    proc_gbuf_free(&slot->err);
+    int status = proc_status(slot);
+    slot->used = 0;
+    return status;
 }
