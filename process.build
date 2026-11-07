@@ -1,0 +1,6 @@
+// The C part of the package. The header is vendored, so the package needs
+// no other library. The thread library holds the writer of the input.
+c_sources = ["src/proc.c"];
+c_include = ["."];
+c_libs_linux = ["pthread"];
+c_libs_macos = ["pthread"];
