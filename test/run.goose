@@ -92,10 +92,9 @@ fn cat_program() -> Program {
     return Program { name: "cat", args: copy(args) };
 }
 
-// The path with the separators of Windows. cmd reads a slash in an
-// argument as the start of a switch.
-fn dos_path(text: const u8[:]) -> const u8[:] {
-    var out: u8[>..] = [];
+// The path with the separators of Windows, written into out. cmd reads a
+// slash in an argument as the start of a switch.
+fn dos_path(out: u8[>..]&, text: const u8[:]) {
     for i in text.len {
         if text[i] == 47 {
             out.push(92);
@@ -103,7 +102,6 @@ fn dos_path(text: const u8[:]) -> const u8[:] {
             out.push(text[i]);
         }
     }
-    return out;
 }
 
 // A program that prints a file.
@@ -112,7 +110,7 @@ fn file_program(path: const u8[:]) -> Program {
     if is_windows() {
         args.push("/c");
         args.push("type");
-        args.push(dos_path(path));
+        args.push(path);
         return Program { name: "cmd", args: copy(args) };
     }
     args.push(path);
@@ -303,7 +301,13 @@ fn test_large_output() {
     for i in 0..15 {
         append_file(path, chunk);
     }
-    let p = file_program(path);
+    var wpath: u8[>..] = [];
+    if is_windows() {
+        dos_path(wpath, path);
+    } else {
+        wpath.append(path);
+    }
+    let p = file_program(wpath);
     var opts = process::options();
     opts.timeout_ms = 30000;
     let r = process::run(p.name, p.args, "", opts);
