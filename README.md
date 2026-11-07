@@ -13,7 +13,7 @@ functions.
 Add this to the root file of the program that uses it:
 
 ```goose
-import process from "rekanalar/goose-process@v0.1.0";
+import process from "rekanalar/goose-process@v0.1.1";
 ```
 
 The CI runs the gate on Linux, on macOS and on Windows. It uses Goose
@@ -37,7 +37,7 @@ program and waits for it.
 
 ```goose
 import std;
-import process from "rekanalar/goose-process@v0.1.0";
+import process from "rekanalar/goose-process@v0.1.1";
 
 fn main() {
     var args: const u8[:][>..] = [];
@@ -131,12 +131,18 @@ the program.
   system cannot pass a NUL byte in an argument.
 - The package starts no shell. An argument reaches the child as one
   argument.
+- A timed run on Windows returns after the kill now. On v0.1.0 it could
+  hang when a grandchild held the input pipe of the child.
+- The rare write from the parent, when the writer thread does not start,
+  stays blocking on Windows.
 
 ## Not verified
 
 - The quoting of arguments on Windows beyond the tests of this package.
 - A child that ignores the stop signal. The test runs on Unix only.
 - The grandchildren of a child.
+- The cancel of a blocked write on Windows. No machine of this project
+  runs Windows. The CI runs the suite there on every push.
 
 ## Test
 
