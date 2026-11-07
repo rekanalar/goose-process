@@ -20,17 +20,6 @@ import process from "rekanalar/goose-process@v1.0.0";
 The CI runs the gate on Linux, on macOS and on Windows. It uses Goose
 v2026.3 and v2026.4 on each.
 
-## What changed in v0.2.0
-
-v0.1.x started a program and waited for it. v0.2.0 adds the live handle:
-`spawn`, `alive`, `read`, `write`, `close_input`, `wait`, `kill` and `free`.
-It adds `RUNNING` as a status. It adds `separate` to `Options`, and the
-apart run `run_split`.
-
-Nothing of v0.1.x changed its name, its type or its result. One rule is
-new: `run` refuses a request that sets `separate`. Use `run_split` when you
-want the two streams apart.
-
 ## Parity with the reference libraries
 
 The package holds the features of Python `subprocess`, Rust
