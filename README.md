@@ -134,9 +134,8 @@ the program.
 
 ## Not verified
 
-- The quoting of arguments on Windows.
-- The environment and the directory on Windows.
-- A child that ignores the stop signal.
+- The quoting of arguments on Windows beyond the tests of this package.
+- A child that ignores the stop signal. The test runs on Unix only.
 - The grandchildren of a child.
 
 ## Test
