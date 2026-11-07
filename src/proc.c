@@ -409,9 +409,11 @@ int32_t proc_run(proc_slice spec, proc_slice input, gs_rref out, int32_t *code,
     subprocess_join(&child, &return_code);
     subprocess_destroy(&child);
     if (has_thread) {
-        // The writer gives up when the child ends.
+        // The writer gives up when the child ends. A blocked write never
+        // reads the flag, so the cancel breaks it.
         writer.stop = 1;
 #ifdef _WIN32
+        CancelSynchronousIo(thread);
         WaitForSingleObject(thread, INFINITE);
         CloseHandle(thread);
 #else
