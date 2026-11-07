@@ -623,7 +623,7 @@ fn test_read_silent() {
 
 // The test of the reads together holding the whole output.
 fn test_read_to_end() {
-    let p = echo_program("whole output");
+    let p = echo_program("wholeoutput");
     var opts = process::options();
     let child = process::spawn(p.name, p.args, opts);
     var text: u8[>..] = [];
@@ -634,7 +634,7 @@ fn test_read_to_end() {
     let outcome = process::wait(child, 0);
     assert(outcome.status == process::ENDED);
     process::read(child, text, errors);
-    assert(cut_end(text) == "whole output");
+    assert(cut_end(text) == "wholeoutput");
     process::free(child);
 }
 
@@ -727,7 +727,7 @@ fn test_run_refuses_separate() {
 
 // The test of two chained children. The result matches the direct run.
 fn test_chain() {
-    let first = echo_program("hello chain");
+    let first = echo_program("hello-chain");
     var opts = process::options();
     let a = process::spawn(first.name, first.args, opts);
     var text: u8[>..] = [];
@@ -752,11 +752,11 @@ fn test_chain() {
     assert(two.status == process::ENDED);
     process::read(b, answer, errors);
     process::free(b);
-    assert(cut_end(answer) == "hello chain");
+    assert(cut_end(answer) == "hello-chain");
 
     let direct = process::run(second.name, second.args, text, opts);
     assert(direct.status == process::ENDED);
-    assert(cut_end(direct.output) == "hello chain");
+    assert(cut_end(direct.output) == "hello-chain");
 }
 
 // The test of a chain where the first child fails. The caller sees the code
