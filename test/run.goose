@@ -144,12 +144,13 @@ fn pwd_program() -> Program {
     return Program { name: "sh", args: copy(args) };
 }
 
-// The output without its last line ending.
+// The output without its last line ending and trailing spaces. cmd keeps
+// the space before a redirect in the text that it echoes.
 fn cut_end(text: const u8[:]) -> const u8[:] {
     var end = text.len;
     while end > 0 {
         let last = text[end - 1];
-        if last != 10 && last != 13 {
+        if last != 10 && last != 13 && last != 32 {
             break;
         }
         end--;
