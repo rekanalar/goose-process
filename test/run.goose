@@ -92,13 +92,27 @@ fn cat_program() -> Program {
     return Program { name: "cat", args: copy(args) };
 }
 
+// The path with the separators of Windows. cmd reads a slash in an
+// argument as the start of a switch.
+fn dos_path(text: const u8[:]) -> const u8[:] {
+    var out: u8[>..] = [];
+    for i in text.len {
+        if text[i] == 47 {
+            out.push(92);
+        } else {
+            out.push(text[i]);
+        }
+    }
+    return out;
+}
+
 // A program that prints a file.
 fn file_program(path: const u8[:]) -> Program {
     var args: const u8[:][>..] = [];
     if is_windows() {
         args.push("/c");
         args.push("type");
-        args.push(path);
+        args.push(dos_path(path));
         return Program { name: "cmd", args: copy(args) };
     }
     args.push(path);
