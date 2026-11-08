@@ -215,6 +215,32 @@ every call. A child that writes much never waits for the parent.
 The C part needs a C compiler. `goose build` and `goose run` build it into
 the program.
 
+## Security
+
+The package starts the programs that a caller names. These protections go
+beyond the reference libraries.
+
+- The child gets at most 64 arguments and the environment at most 256
+  entries. Python, Node, Rust and Go take any number of them. A list from
+  an untrusted source cannot make the process hold a long list.
+- An environment entry needs an equals sign. An entry without one is
+  refused. The references pass such an entry on and let the system
+  refuse it.
+
+These risks stay.
+
+- The package starts no shell. An argument reaches the child as one
+  argument. A caller that builds a command from a text must keep the
+  parts apart. It must not join them for a shell.
+- The stop is a kill. It reaches the child only, so the grandchildren of
+  the child keep running.
+- The package finds the program with the PATH of the parent. A PATH that
+  an attacker wrote can point at another program.
+- The output of the child grows with the output of the child. The caller
+  must bound it.
+- A NUL byte in an argument cuts the argument at that byte. Python, Node
+  and Go refuse the argument instead.
+
 ## Limits that stay
 
 - The output grows with the output of the child. The caller sets a limit to
