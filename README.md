@@ -138,17 +138,17 @@ child only when you know that it reads its input. See
 
 | Function | Purpose |
 |---|---|
-| `process::options()` | Return an `Options` with the defaults. |
-| `process::run(cmd, args, input, opts)` | Start the program `cmd` with the arguments `args`. Write `input` to its standard input. Wait for it. Return a `Result`. The streams stay joined. Refuses `separate`. |
-| `process::run_split(cmd, args, input, opts, out, err)` | Start the program and wait for it. Keep the output stream and the error stream apart. Return an `Outcome`. |
-| `process::spawn(cmd, args, opts)` | Start the program without waiting. Return a `Child`. |
-| `process::alive(child)` | Say whether the child still lives. |
-| `process::read(child, out, err)` | Move the bytes that arrived since the last read into `out` and `err`. Return the count. |
-| `process::write(child, bytes)` | Give bytes to the input of the child. Wait while the child does not take them. Return the count. |
-| `process::close_input(child)` | Close the input of the child. The child sees the end of its input. |
-| `process::wait(child, timeout_ms)` | Wait for the child. A limit of 0 waits without a limit. Return an `Outcome`. |
-| `process::kill(child)` | Stop the child. The stop stays a kill. |
-| `process::free(child)` | Stop a child that lives, then free the handle. |
+| `options()` | Return an `Options` with the defaults. |
+| `run(cmd, args, input, opts)` | Start the program `cmd` with the arguments `args`. Write `input` to its standard input. Wait for it. Return a `Result`. The streams stay joined. Refuses `separate`. |
+| `run_split(cmd, args, input, opts, out, err)` | Start the program and wait for it. Keep the output stream and the error stream apart. Return an `Outcome`. |
+| `spawn(cmd, args, opts)` | Start the program without waiting. Return a `Child`. |
+| `alive(child)` | Say whether the child still lives. |
+| `read(child, out, err)` | Move the bytes that arrived since the last read into `out` and `err`. Return the count. |
+| `write(child, bytes)` | Give bytes to the input of the child. Wait while the child does not take them. Return the count. |
+| `close_input(child)` | Close the input of the child. The child sees the end of its input. |
+| `wait(child, timeout_ms)` | Wait for the child. A limit of 0 waits without a limit. Return an `Outcome`. |
+| `kill(child)` | Stop the child. The stop stays a kill. |
+| `free(child)` | Stop a child that lives, then free the handle. |
 
 `cmd` is the name of the program. It is the first argument of the child.
 `args` holds the other arguments. `input` holds the bytes for the standard
@@ -158,11 +158,11 @@ input of the child. `opts` holds the settings.
 
 | Constant | Value | Meaning |
 |---|---|---|
-| `process::ENDED` | 0 | The child ran and ended. The code holds its exit code. |
-| `process::NOT_STARTED` | 1 | The child did not start. The program does not exist, or the directory is bad. |
-| `process::STOPPED` | 2 | The child was stopped on the time limit, or the caller stopped it. |
-| `process::REFUSED` | 3 | The package refused the request. It started no program. |
-| `process::RUNNING` | 4 | The child lives. A `Child` holds it until it ends. |
+| `ENDED` | 0 | The child ran and ended. The code holds its exit code. |
+| `NOT_STARTED` | 1 | The child did not start. The program does not exist, or the directory is bad. |
+| `STOPPED` | 2 | The child was stopped on the time limit, or the caller stopped it. |
+| `REFUSED` | 3 | The package refused the request. It started no program. |
+| `RUNNING` | 4 | The child lives. A `Child` holds it until it ends. |
 
 ### Options
 
